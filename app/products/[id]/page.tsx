@@ -7,28 +7,87 @@ import { supabase } from '@/lib/supabase';
 import { motion } from 'framer-motion';
 import Image from 'next/image';
 import Link from 'next/link';
-import { Heart, Bookmark, Star, Send, Loader2, Package, Truck, Shield, Eye, TrendingUp } from 'lucide-react';
+import { Heart, Bookmark, Star, Send, Loader2, Package, Truck, Shield, Eye, TrendingUp, Reply } from 'lucide-react';
 import { useSession } from '@/lib/SessionContext';
 import { useCart } from '@/lib/CartContext';
-import { Product, Review } from '@/types';
+
+// تعریف تایپ Review در اینجا اگر فایل types.ts ندارید
+interface Review {
+  id: string;
+  product_id: string;
+  user_id: string;
+  rating: number | null;
+  comment: string;
+  status: 'pending' | 'approved';
+  created_at: string;
+  parent_id: string | null;
+  replies?: Review[];
+}
+
+// تعریف تایپ Product
+interface Product {
+  id: string;
+  name: string;
+  category: string;
+  description: string;
+  price: number;
+  image_url: string;
+  stock_quantity: number;
+  likes_count: number;
+  view_count: number;
+  material?: string;
+  shipping_info?: string;
+  size_guide?: string;
+}
+
+
+// کامپوننت بازگشتی برای نمایش نظرات و پاسخ‌ها
+const CommentThread: React.FC<{ review: Review }> = ({ review }) => {
+  const isAdminReply = review.parent_id !== null;
+  
+  return (
+    <div className={`${isAdminReply ? 'mr-8 mt-3 p-4 bg-gray-50 rounded-lg border-r-4 border-rose-300' : ''}`}>
+      <div className="flex items-center gap-1 mb-2">
+        {review.rating !== null && [...Array(5)].map((_, i) => (
+          <Star key={i} size={16} className={i < review.rating ? 'text-yellow-400 fill-current' : 'text-gray-300'} />
+        ))}
+        {isAdminReply && <span className="text-xs font-semibold text-rose-600 bg-rose-100 px-2 py-1 rounded">پاسخ ادمین</span>}
+      </div>
+      <p className="text-gray-700 text-sm leading-relaxed">{review.comment}</p>
+      <p className="text-gray-400 text-xs mt-2">
+        {new Date(review.created_at).toLocaleDateString('fa-IR')}
+      </p>
+      {/* نمایش پاسخ‌های این نظر */}
+      {review.replies && review.replies.length > 0 && (
+        <div className="mt-4 space-y-3">
+          {review.replies.map(reply => (
+            <CommentThread key={reply.id} review={reply} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
 
 
 export default function ProductDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const { user } = useSession();
-  const { addItem, isAdding } = useCart(); // استفاده از هوک سبد خرید
+  const { addItem, isAdding } = useCart();
   const [product, setProduct] = useState<Product | null>(null);
   const [reviews, setReviews] = useState<Review[]>([]);
   const [loading, setLoading] = useState(true);
   const [isLiked, setIsLiked] = useState(false);
   const [isLiking, setIsLiking] = useState(false);
+  
+  // State for review form
+  const [reviewRating, setReviewRating] = useState(0);
+  const [reviewComment, setReviewComment] = useState('');
+  const [isSubmittingReview, setIsSubmittingReview] = useState(false);
+  const [reviewSubmitted, setReviewSubmitted] = useState(false);
 
   useEffect(() => {
     const fetchData = async (productId: string) => {
-      if (!user) {
-        setLoading(false);
-        return;
-      }
       setLoading(true);
       
       const { data: productData, error: productError } = await supabase
@@ -39,13 +98,12 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
 
       if (productError) {
         console.error('خطا در دریافت محصول:', productError);
-       } else {
-    setProduct(productData);
-    // ثبت بازدید یکتا فقط اگر کاربر لاگین کرده باشد
-    if (user) {
-      supabase.rpc('add_view_if_not_exists', { product_id_to_view: productId });
-    }
-  }
+      } else {
+        setProduct(productData);
+        if (user) {
+          supabase.rpc('add_view_if_not_exists', { product_id_to_view: productId });
+        }
+      }
 
       if (user) {
         const { data: likeData } = await supabase.rpc('get_like_status', { product_id_to_check: productId });
@@ -54,17 +112,43 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
         }
       }
 
+      // واکشی تمام نظرات تایید شده (شامل پاسخ‌ها)
       const { data: reviewsData, error: reviewsError } = await supabase
         .from('reviews')
-        .select('rating, comment, created_at')
+        .select('*') // همه ستون‌ها را انتخاب می‌کنیم
         .eq('product_id', productId)
         .eq('status', 'approved')
-        .order('created_at', { ascending: false });
+        .order('created_at', { ascending: true }); // ترتیب زمانی صعودی برای ساختار درختی
 
       if (reviewsError) {
         console.error('خطا در دریافت نظرات:', reviewsError);
+        setReviews([]);
       } else {
-        setReviews(reviewsData || []);
+        // تبدیل آرایه مسطح به ساختار درختی
+        const nestComments = (comments: Review[]): Review[] => {
+          const commentMap: { [key: string]: Review } = {};
+          const roots: Review[] = [];
+
+          // ابتدا همه کامنت‌ها را در یک مپ قرار می‌دهیم
+          comments.forEach(comment => {
+            commentMap[comment.id] = { ...comment, replies: [] };
+          });
+
+          // سپس کامنت‌ها را به والدینشان متصل می‌کنیم
+          comments.forEach(comment => {
+            if (comment.parent_id === null) {
+              roots.push(commentMap[comment.id]);
+            } else {
+              const parent = commentMap[comment.parent_id];
+              if (parent) {
+                parent.replies!.push(commentMap[comment.id]);
+              }
+            }
+          });
+          return roots;
+        };
+
+        setReviews(nestComments(reviewsData || []));
       }
       
       setLoading(false);
@@ -96,6 +180,45 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
     await addItem(product.id);
   };
 
+  const handleReviewSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    if (!user || !product || reviewRating === 0 || reviewComment.trim() === '') {
+      alert('لطفاً تمام فیلدها را با دقت پر کنید و امتیاز را انتخاب نمایید.');
+      return;
+    }
+    
+    setIsSubmittingReview(true);
+    
+    try {
+      const { error } = await supabase
+        .from('reviews')
+        .insert({
+          product_id: product.id,
+          user_id: user.id,
+          rating: reviewRating,
+          comment: reviewComment.trim(),
+          status: 'pending',
+          parent_id: null // نظرات کاربران همیشه والد هستند
+        });
+      
+      if (error) {
+        console.error('خطا در ثبت نظر:', error);
+        alert(`خطایی در ثبت نظر شما رخ داد: ${error.message || 'لطفاً دوباره تلاش کنید.'}`);
+      } else {
+        setReviewRating(0);
+        setReviewComment('');
+        setReviewSubmitted(true);
+        setTimeout(() => setReviewSubmitted(false), 3000);
+      }
+    } catch (error) {
+      console.error('Caught an unexpected error:', error);
+      alert('خطایی غیرمنتظره رخ داد. لطفاً دوباره تلاش کنید.');
+    } finally {
+      setIsSubmittingReview(false);
+    }
+  };
+
   if (loading) {
     return <div className="flex justify-center items-center min-h-screen"><Loader2 className="animate-spin text-rose-600" /></div>;
   }
@@ -109,6 +232,7 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
   return (
     <div className="min-h-screen bg-rose-50 py-8">
       <div className="container mx-auto px-6 max-w-5xl">
+        {/* ... بخش‌های قبلی محصول (تصویر، قیمت، دکمه افزودن به سبد خرید) ... */}
         <motion.div 
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -134,7 +258,6 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
               <h1 className="text-4xl font-bold text-gray-800 mb-2">{product.name}</h1>
               <p className="text-lg text-gray-500 mb-4">{product.category}</p>
               
-              {/* بخش اطلاعات کلیدی و اعتماد */}
               <div className="flex items-center gap-4 mb-6">
                 <button 
                   onClick={handleLike} 
@@ -176,57 +299,60 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
           </div>
         </motion.div>
 
-        {/* بخش جزئیات بیشتر و اعتمادسازی */}
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, delay: 0.2 }}
+        {/* بخش نظرات به‌روز شده */}
+        <motion.div 
+          initial={{ opacity: 0, y: 20 }} 
+          animate={{ opacity: 1, y: 0 }} 
+          transition={{ duration: 0.5, delay: 0.4 }} 
           className="bg-white rounded-2xl shadow-xl p-8 mt-8"
         >
-          <h2 className="text-2xl font-bold text-gray-800 mb-6">چرا این محصول را دوست خواهید داشت؟</h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div className="flex items-start gap-3">
-              <Package className="text-rose-500 mt-1" size={24} />
-              <div>
-                <h3 className="font-semibold text-gray-800">جنس بی‌نظیر</h3>
-                <p className="text-gray-600 text-sm">{product.material || 'جنس این محصول بسیار باکیفیت و راحت است.'}</p>
-              </div>
+          <h2 className="text-2xl font-bold text-gray-800 mb-6">نظرات کاربران</h2>
+          
+          {user ? (
+            <div className="mb-8 p-6 bg-gray-50 rounded-lg">
+              <h3 className="text-lg font-semibold text-gray-800 mb-4">ثبت نظر شما</h3>
+              {reviewSubmitted && (
+                <div className="mb-4 p-3 bg-green-100 text-green-700 rounded-lg">
+                  نظر شما با موفقیت ثبت شد و پس از تایید مدیر نمایش داده خواهد شد.
+                </div>
+              )}
+              <form onSubmit={handleReviewSubmit}>
+                <div className="mb-4">
+                  <label className="block text-gray-700 mb-2">امتیاز شما:</label>
+                  <div className="flex gap-1">
+                    {[1, 2, 3, 4, 5].map((star) => (
+                      <button key={star} type="button" onClick={() => setReviewRating(star)} className="focus:outline-none">
+                        <Star size={24} className={star <= reviewRating ? 'text-yellow-400 fill-current' : 'text-gray-300'} />
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="mb-4">
+                  <label htmlFor="comment" className="block text-gray-700 mb-2">نظر شما:</label>
+                  <textarea id="comment" value={reviewComment} onChange={(e) => setReviewComment(e.target.value)} rows={4} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-rose-500" placeholder="نظر خود را در مورد این محصول بنویسید..."></textarea>
+                </div>
+                <button type="submit" disabled={isSubmittingReview || reviewRating === 0 || reviewComment.trim() === ''} className="bg-rose-500 text-white px-6 py-2 rounded-lg hover:bg-rose-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
+                  {isSubmittingReview ? <Loader2 className="animate-spin" size={20} /> : <Send size={20} />}
+                  ثبت نظر
+                </button>
+              </form>
             </div>
-            <div className="flex items-start gap-3">
-              <Truck className="text-rose-500 mt-1" size={24} />
-              <div>
-                <h3 className="font-semibold text-gray-800">ارسال سریع</h3>
-                <p className="text-gray-600 text-sm">{product.shipping_info || 'سفارش‌ها ظرف ۲ تا ۴ روز کاری به دست شما می‌رسد.'}</p>
-              </div>
-            </div>
-            <div className="flex items-start gap-3">
-              <Shield className="text-rose-500 mt-1" size={24} />
-              <div>
-                <h3 className="font-semibold text-gray-800">تضمین کیفیت</h3>
-                <p className="text-gray-600 text-sm">اگر از خرید خود راضی نبودید، می‌توانید آن را بازگردانید.</p>
-              </div>
-            </div>
-             <div className="flex items-start gap-3">
-              <Star className="text-rose-500 mt-1" size={24} />
-              <div>
-                <h3 className="font-semibold text-gray-800">رضایت کامل</h3>
-                <p className="text-gray-600 text-sm">طراحی این محصول توسط بهترین طراحان انجام شده است.</p>
-              </div>
-            </div>
-          </div>
-          {product.size_guide && (
-            <div className="mt-6 p-4 bg-gray-50 rounded-lg">
-              <h4 className="font-semibold text-gray-800 mb-2">راهنمای سایز:</h4>
-              <p className="text-gray-600">{product.size_guide}</p>
+          ) : (
+            <div className="mb-8 p-4 bg-blue-50 text-blue-700 rounded-lg text-center">
+              برای ثبت نظر، لطفاً <Link href="/login" className="text-blue-600 underline hover:text-blue-800">وارد حساب کاربری خود شوید</Link>.
             </div>
           )}
-        </motion.div>
-
-        {/* بخش نظرات (بدون تغییر) */}
-        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5, delay: 0.4 }} className="bg-white rounded-2xl shadow-xl p-8 mt-8">
-          <h2 className="text-2xl font-bold text-gray-800 mb-6">نظرات کاربران</h2>
-          <div className="p-4 bg-gray-50 rounded-lg mb-6 text-center text-gray-500">فرم ثبت نظر به زودی اضافه می‌شود...</div>
-          {reviews.length > 0 ? (<div className="space-y-4">{reviews.map((review) => (<div key={review.id} className="border-b pb-4"><div className="flex items-center gap-1 mb-2">{[...Array(5)].map((_, i) => (<Star key={i} size={16} className={i < review.rating ? 'text-yellow-400 fill-current' : 'text-gray-300'} />))}</div><p className="text-gray-700">{review.comment}</p></div>))}</div>) : (<p className="text-gray-500 text-center">هنوز نظری ثبت نشده است.</p>)}
+          
+          {/* نمایش نظرات و پاسخ‌ها به صورت درختی */}
+          {reviews.length > 0 ? (
+            <div className="space-y-6">
+              {reviews.map(review => (
+                <CommentThread key={review.id} review={review} />
+              ))}
+            </div>
+          ) : (
+            <p className="text-gray-500 text-center">هنوز نظری ثبت نشده است.</p>
+          )}
         </motion.div>
       </div>
     </div>

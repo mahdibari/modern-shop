@@ -27,11 +27,11 @@ const Header = () => {
           <div className="flex items-center space-x-8 space-x-reverse">
             <div className="flex space-x-6 space-x-reverse">
               <Link href="/" className="text-gray-700 hover:text-rose-500 transition-colors duration-300 font-medium">خانه</Link>
-              <Link href="/products" className="text-gray-700 hover:text-rose-500 transition-colors duration-300 font-medium">محصولات</Link>
+             
               <Link href="/contact" className="text-gray-700 hover:text-rose-500 transition-colors duration-300 font-medium"> تماس با ما</Link>
               {/* این لینک جدید را اضافه کردیم */}
               <Link href="/about" className="text-gray-700 hover:text-rose-500 transition-colors duration-300 font-medium">درباره ما</Link>
-              <Link href="/contact" className="text-gray-700 hover:text-rose-500 transition-colors duration-300 font-medium">تماس با ما</Link>
+             
             </div>
             
             {/* منطق شرطی برای نمایش دکمه ورود یا حساب کاربری */}
