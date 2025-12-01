@@ -10,6 +10,7 @@ import Link from 'next/link';
 import { Heart, Bookmark, Star, Send, Loader2, Package, Truck, Shield, Eye, TrendingUp, Reply } from 'lucide-react';
 import { useSession } from '@/lib/SessionContext';
 import { useCart } from '@/lib/CartContext';
+import AuthModal from '@/components/AuthModal'; // اضافه کردن این خط
 
 // تعریف تایپ Review در اینجا اگر فایل types.ts ندارید
 interface Review {
@@ -40,7 +41,6 @@ interface Product {
   size_guide?: string;
 }
 
-
 // کامپوننت بازگشتی برای نمایش نظرات و پاسخ‌ها
 const CommentThread: React.FC<{ review: Review }> = ({ review }) => {
   const isAdminReply = review.parent_id !== null;
@@ -69,7 +69,6 @@ const CommentThread: React.FC<{ review: Review }> = ({ review }) => {
   );
 };
 
-
 export default function ProductDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const { user } = useSession();
@@ -85,6 +84,9 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
   const [reviewComment, setReviewComment] = useState('');
   const [isSubmittingReview, setIsSubmittingReview] = useState(false);
   const [reviewSubmitted, setReviewSubmitted] = useState(false);
+  
+  // اضافه کردن state برای کنترل مودال احراز هویت
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
 
   useEffect(() => {
     const fetchData = async (productId: string) => {
@@ -174,7 +176,8 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
 
   const handleAddToCart = async () => {
     if (!product || !user) {
-      alert('برای افزودن به سبد خرید، لطفاً وارد حساب کاربری خود شوید.');
+      // به جای alert، مودال ورود را باز می‌کنیم
+      setIsAuthModalOpen(true);
       return;
     }
     await addItem(product.id);
@@ -183,7 +186,13 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
   const handleReviewSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (!user || !product || reviewRating === 0 || reviewComment.trim() === '') {
+    if (!user) {
+      // اگر کاربر لاگین نکرده باشد، مودال ورود را باز می‌کنیم
+      setIsAuthModalOpen(true);
+      return;
+    }
+    
+    if (!product || reviewRating === 0 || reviewComment.trim() === '') {
       alert('لطفاً تمام فیلدها را با دقت پر کنید و امتیاز را انتخاب نمایید.');
       return;
     }
@@ -339,7 +348,14 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
             </div>
           ) : (
             <div className="mb-8 p-4 bg-blue-50 text-blue-700 rounded-lg text-center">
-              برای ثبت نظر، لطفاً <Link href="/login" className="text-blue-600 underline hover:text-blue-800">وارد حساب کاربری خود شوید</Link>.
+              برای ثبت نظر، لطفاً 
+              <button 
+                onClick={() => setIsAuthModalOpen(true)} 
+                className="text-blue-600 underline hover:text-blue-800 mx-1"
+              >
+                وارد حساب کاربری خود شوید
+              </button>
+              .
             </div>
           )}
           
@@ -355,6 +371,12 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
           )}
         </motion.div>
       </div>
+      
+      {/* اضافه کردن مودال احراز هویت */}
+      <AuthModal 
+        isOpen={isAuthModalOpen} 
+        onClose={() => setIsAuthModalOpen(false)} 
+      />
     </div>
   );
 }

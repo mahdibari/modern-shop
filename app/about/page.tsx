@@ -145,7 +145,7 @@ export default function AboutPage() {
               مجموعه ما را کاوش کنید و استایل منحصر به فرد خود را پیدا کنید. منتظر شما هستیم.
             </p>
             <Link
-              href="/products"
+              href="/"
               className="bg-white text-rose-600 px-10 py-4 rounded-full font-bold text-lg hover:bg-gray-100 transition-all shadow-lg hover:shadow-xl inline-flex items-center gap-2"
             >
               خرید کنید
